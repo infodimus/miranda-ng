@@ -1,0 +1,192 @@
+/*
+Copyright (C) 2012-26 Miranda NG team (https://miranda-ng.org)
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation version 2
+of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program. If not, see <http://www.gnu.org/licenses/>.
+*/
+
+#include "stdafx.h"
+
+#if __has_include("../../../../miranda-private-keys/Telegram/api.h")
+	#include "../../../../miranda-private-keys/Telegram/api.h"
+#else
+	// no compiled-in keys: api_id/api_hash from my.telegram.org must be set in the options
+	#define MIRANDA_API_ID   0
+	#define MIRANDA_API_HASH ""
+#endif
+
+///////////////////////////////////////////////////////////////////////////////
+
+INT_PTR CALLBACK CTelegramProto::EnterEmail(void *param)
+{
+	auto *ppro = (CTelegramProto *)param;
+
+	ENTER_STRING es = {};
+	es.szModuleName = ppro->m_szModuleName;
+	es.caption = TranslateT("Enter email address for account verification");
+	if (EnterString(&es)) {
+		ppro->SendQuery(new TD::setAuthenticationEmailAddress(T2Utf(es.ptszResult).get()), &CTelegramProto::OnUpdateAuth);
+		mir_free(es.ptszResult);
+	}
+	else ppro->LogOut();
+	return 0;
+}
+
+INT_PTR CALLBACK CTelegramProto::EnterEmailCode(void *param)
+{
+	auto *ppro = (CTelegramProto *)param;
+
+	ENTER_STRING es = {};
+	es.szModuleName = ppro->m_szModuleName;
+	es.caption = TranslateT("Enter verification code received by email");
+	if (EnterString(&es)) {
+		ppro->SendQuery(new TD::checkAuthenticationEmailCode(
+			TD::object_ptr<TD::EmailAddressAuthentication>(new TD::emailAddressAuthenticationCode(T2Utf(es.ptszResult).get()))),
+			&CTelegramProto::OnUpdateAuth);
+		mir_free(es.ptszResult);
+	}
+	else ppro->LogOut();
+	return 0;
+}
+
+INT_PTR CALLBACK CTelegramProto::EnterPhoneCode(void *param)
+{
+	auto *ppro = (CTelegramProto *)param;
+
+	ENTER_STRING es = {};
+	es.szModuleName = ppro->m_szModuleName;
+	es.caption = TranslateT("Enter the secret code sent to another device");
+	if (EnterString(&es)) {
+		ppro->SendQuery(new TD::checkAuthenticationCode(T2Utf(es.ptszResult).get()), &CTelegramProto::OnUpdateAuth);
+		mir_free(es.ptszResult);
+	}
+	else ppro->LogOut();
+	return 0;
+}
+
+INT_PTR CALLBACK CTelegramProto::EnterPassword(void *param)
+{
+	auto *ppro = (CTelegramProto *)param;
+	CMStringW wszTitle(TranslateT("Enter password"));
+
+	auto *pAuth = (TD::authorizationStateWaitPassword *)ppro->pAuthState.get();
+	if (!pAuth->password_hint_.empty())
+		wszTitle.AppendFormat(TranslateT(" (hint: %s)"), Utf2T(pAuth->password_hint_.c_str()).get());
+
+	ENTER_STRING es = {};
+	es.szModuleName = ppro->m_szModuleName;
+	es.caption = wszTitle;
+	es.type = ESF_PASSWORD;
+	if (EnterString(&es)) {
+		ppro->SendQuery(new TD::checkAuthenticationPassword(T2Utf(es.ptszResult).get()), &CTelegramProto::OnUpdateAuth);
+		mir_free(es.ptszResult);
+	}
+	else ppro->LogOut();
+	return 0;
+}
+
+void CTelegramProto::ProcessAuth(TD::updateAuthorizationState *pObj)
+{
+	pAuthState = std::move(pObj->authorization_state_);
+	switch (pAuthState->get_id()) {
+	case TD::authorizationStateReady::ID:
+		if (pConnState && pConnState->get_id() == TD::connectionStateReady::ID)
+			OnLoggedIn();
+		break;
+
+	case TD::authorizationStateWaitTdlibParameters::ID:
+		MFileVersion v;
+		Miranda_GetFileVersion(&v);
+	
+		char text[100];
+		mir_snprintf(text, "%d.%d.%d.%d", v[0], v[1], v[2], v[3]);
+		{
+			int32_t iApiId = m_iApiId ? (int32_t)m_iApiId : MIRANDA_API_ID;
+			std::string szApiHash = mir_wstrlen(m_wszApiHash) ? T2Utf(m_wszApiHash).get() : MIRANDA_API_HASH;
+			if (iApiId == 0 || szApiHash.empty()) {
+				Popup(0, TranslateT("Telegram api_id/api_hash are not set. Get them at my.telegram.org and enter them in the AI options page."), TranslateT("Telegram AI"));
+				LogOut();
+				break;
+			}
+
+			CMStringW wszPath(GetProtoFolder());
+
+			auto *request = new TD::setTdlibParameters();
+			request->database_directory_ = T2Utf(wszPath).get();
+			request->use_message_database_ = false;
+			request->use_secret_chats_ = true;
+			request->use_test_dc_ = getBool("UseTestServer"); // Hidden setting
+			request->api_id_ = iApiId;
+			request->api_hash_ = szApiHash;
+			request->system_language_code_ = Langpack_GetDefaultLocaleName();
+			request->device_model_ = T2Utf(m_wszDeviceName).get();
+			request->application_version_ = text;
+			SendQuery(request, &CTelegramProto::OnUpdateAuth);
+			/*
+			#ifdef _DEBUG
+			td_set_log_verbosity_level(4);
+			td_set_log_file_path("c:\\temp\\tdlib.log");
+			td_set_log_max_file_size(1024 * 1024 * 1024);
+			#endif
+			*/
+		}
+		break;
+
+	case TD::authorizationStateWaitPhoneNumber::ID:
+		{
+			CMStringA m_szFullPhone;
+			m_szFullPhone.Format("%d%S", (int)m_iCountry, (wchar_t *)m_szOwnPhone);
+			SendQuery(new TD::setAuthenticationPhoneNumber(m_szFullPhone.c_str(), nullptr), &CTelegramProto::OnUpdateAuth);
+		}
+		break;
+
+	case TD::authorizationStateWaitCode::ID:
+		CallFunctionSync(EnterPhoneCode, this);
+		break;
+
+	case TD::authorizationStateWaitPassword::ID:
+		CallFunctionSync(EnterPassword, this);
+		break;
+
+	case TD::authorizationStateWaitEmailAddress::ID:
+		CallFunctionSync(EnterEmail, this);
+		break;
+
+	case TD::authorizationStateWaitEmailCode::ID:
+		CallFunctionSync(EnterEmailCode, this);
+		break;
+
+	case TD::authorizationStateClosed::ID:
+		debugLogA("Connection terminated, exiting");
+		LogOut();
+		break;
+	}
+}
+
+void CTelegramProto::OnUpdateAuth(td::ClientManager::Response &response)
+{
+	if (response.object->get_id() == TD::error::ID) {
+		auto *pError = (TD::error *)response.object.get();
+		debugLogA("error happened: %s", to_string(*pError).c_str());
+
+		if (pError->message_ == "PHONE_CODE_EXPIRED")
+			Popup(0, TranslateT("Secret code expired"), TranslateT("Error"));
+		else if (pError->message_ == "INVALID_PHONE_CODE")
+			Popup(0, TranslateT("Invalid secret code"), TranslateT("Error"));
+		else if (pError->message_ == "PASSWORD_HASH_INVALID")
+			Popup(0, TranslateT("Invalid password"), TranslateT("Error"));
+
+		pAuthState = std::move(nullptr);
+		LogOut();
+	}
+}
