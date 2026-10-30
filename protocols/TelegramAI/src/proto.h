@@ -184,6 +184,7 @@ class CTelegramProto : public PROTO<CTelegramProto>
 	friend class COptionsDlg;
 	friend class COptSessionsDlg;
 	friend class CAddPhoneContactDlg;
+	friend class CDeleteContactsDlg;
 
 	class CProtoImpl
 	{
@@ -264,6 +265,10 @@ class CTelegramProto : public PROTO<CTelegramProto>
 	void OnGetBasicGroupInfo(td::ClientManager::Response &response, void *pUserInfo);
 	void OnGetFileInfo(td::ClientManager::Response &response, void *pUserInfo);
 	void OnGetHistory(td::ClientManager::Response &response, void *pUserInfo);
+	void StartHistoryLoad(TG_USER *pUser, TD::int53 chatId);
+	void LoadOlderHistory(MCONTACT hContact, int iLimit, int iDays);
+	void RequestHistory(struct TG_HISTORY_LOAD *pLoad, int iDelay);
+	void __cdecl HistoryDelayThread(void *);
 	void OnGetSessions(td::ClientManager::Response &response, void *pUserInfo);
 	void OnGetUserInfo(td::ClientManager::Response &response, void *pUserInfo);
 	void OnKillSession(td::ClientManager::Response &response, void *pUserInfo);
@@ -402,7 +407,7 @@ class CTelegramProto : public PROTO<CTelegramProto>
 	int     __cdecl OnPrebuildNSMenu(WPARAM, LPARAM);
 
 	// AI conversations
-	HGENMENU hmiAiStart, hmiAiStop;
+	HGENMENU hmiAiStart, hmiAiStop, hmiHistory100, hmiHistory10Days;
 	mir_cs m_csAi;
 	std::map<MCONTACT, uint32_t> m_aiGeneration; // bumped on every incoming message, used to debounce replies
 
@@ -417,6 +422,7 @@ class CTelegramProto : public PROTO<CTelegramProto>
 	int     __cdecl OnPrebuildContactMenu(WPARAM, LPARAM);
 
 	void __cdecl AiReplyThread(void *);
+	void __cdecl DeleteContactsThread(void *);
 
 	// Popups
 	HANDLE m_hPopupClass;
@@ -480,10 +486,14 @@ public:
 	// Services //////////////////////////////////////////////////////////////////////////
 
 	INT_PTR __cdecl SvcAddByPhone(WPARAM, LPARAM);
+	INT_PTR __cdecl SvcDeleteContacts(WPARAM, LPARAM);
+	INT_PTR __cdecl SvcDeleteContactsLocal(WPARAM, LPARAM);
 	INT_PTR __cdecl SvcOfflineFile(WPARAM, LPARAM);
 
 	INT_PTR __cdecl SvcCanEmptyHistory(WPARAM, LPARAM);
 	INT_PTR __cdecl SvcLoadServerHistory(WPARAM, LPARAM);
+	INT_PTR __cdecl SvcLoadHistory100(WPARAM, LPARAM);
+	INT_PTR __cdecl SvcLoadHistory10Days(WPARAM, LPARAM);
 	INT_PTR __cdecl SvcEmptyServerHistory(WPARAM, LPARAM);
 
 	// Options ///////////////////////////////////////////////////////////////////////////
@@ -499,6 +509,7 @@ public:
 	CMOption<bool>     m_bCompressFiles;    // embed pictures & videos into a message on send
 	CMOption<bool>     m_bDeleteContacts;   // delete contacts from Miranda when they are deleted from server
 	CMOption<bool>     m_bIgnoreBots;       // never add bots to the contact list
+	CMOption<bool>     m_bLoadContacts;     // add the server address book to the contact list, not only active dialogs
 	CMOption<uint32_t> m_iTimeDiff1;		    // set this status to m_iStatus1 after this interval of secs
 	CMOption<uint32_t> m_iStatus1;
 	CMOption<uint32_t> m_iTimeDiff2;        // set this status to m_iStatus2 after this interval of secs

@@ -16,6 +16,7 @@
 #define IDD_OPTIONS_SESSIONS            112
 #define IDD_CHANNEL_INFO                113
 #define IDD_OPTIONS_AI                  114
+#define IDD_DELETE_CONTACTS             115
 #define IDC_PHONE                       1001
 #define IDC_DEFGROUP                    1002
 #define IDC_HIDECHATS                   1003
@@ -57,6 +58,9 @@
 #define IDC_AI_AGENTS                   1040
 #define IDC_API_ID                      1041
 #define IDC_API_HASH                    1042
+#define IDC_DEL_HISTORY                 1043
+#define IDC_DEL_FOREVERYONE             1044
+#define IDC_LOAD_CONTACTS               1045
 
 // Next default values for new objects
 // 

@@ -496,46 +496,203 @@ int CTelegramProto::SendQuery(TD::Function *pFunc, TG_QUERY_HANDLER_FULL pHandle
 
 ///////////////////////////////////////////////////////////////////////////////
 
-void CTelegramProto::OnGetBasicGroupInfo(td::ClientManager::Response &response, void *pUserInfo)
+// history is loaded page by page; a failed or empty page used to stop loading for good,
+// so every load keeps its own state and retries flood waits & transient errors
+
+struct TG_HISTORY_LOAD
 {
-	if (!response.object)
+	TG_USER *pUser;
+	TD::int53 chatId, fromId = 0;
+	int iEmpty = 0, iErrors = 0, iDelay = 0;
+	int iLimit = 0, iLoaded = 0;  // stop after that many messages, 0 = no limit
+	time_t minDate = 0;           // stop at messages older than that, 0 = no limit
+};
+
+void CTelegramProto::RequestHistory(TG_HISTORY_LOAD *pLoad, int iDelay)
+{
+	if (iDelay) {
+		pLoad->iDelay = iDelay;
+		ForkThread(&CTelegramProto::HistoryDelayThread, pLoad);
+	}
+	else SendQuery(new TD::getChatHistory(pLoad->chatId, pLoad->fromId, 0, 100, false), &CTelegramProto::OnGetHistory, pLoad);
+}
+
+void CTelegramProto::HistoryDelayThread(void *param)
+{
+	auto *pLoad = (TG_HISTORY_LOAD *)param;
+	for (int i = 0; i < pLoad->iDelay; i += 250) {
+		if (Miranda_IsTerminated() || !isRunning()) {
+			delete pLoad;
+			return;
+		}
+		Sleep(250);
+	}
+
+	if (SendQuery(new TD::getChatHistory(pLoad->chatId, pLoad->fromId, 0, 100, false), &CTelegramProto::OnGetHistory, pLoad) == -1)
+		delete pLoad;
+}
+
+void CTelegramProto::StartHistoryLoad(TG_USER *pUser, TD::int53 chatId)
+{
+	auto *pLoad = new TG_HISTORY_LOAD();
+	pLoad->pUser = pUser;
+	pLoad->chatId = chatId;
+	RequestHistory(pLoad, 0);
+}
+
+// loads history older than the oldest message stored locally: iLimit messages or iDays days
+
+void CTelegramProto::LoadOlderHistory(MCONTACT hContact, int iLimit, int iDays)
+{
+	auto *pUser = FindUser(GetId(hContact));
+	if (pUser == nullptr || pUser->chatId == -1)
 		return;
 
-	if (response.object->get_id() != TD::chat::ID) {
-		debugLogA("Gotten class ID %d instead of %d, exiting", response.object->get_id(), TD::messages::ID);
+	auto *pLoad = new TG_HISTORY_LOAD();
+	pLoad->pUser = pUser;
+	pLoad->chatId = pUser->chatId;
+	pLoad->iLimit = iLimit;
+
+	time_t oldestDate = time(0);
+	for (MEVENT hEvent = db_event_first(hContact); hEvent; hEvent = db_event_next(hContact, hEvent)) {
+		DB::EventInfo dbei(hEvent, false);
+		if (!dbei || dbei.szId == nullptr)
+			continue;
+
+		// szId is "chatId_messageId"; the chat may be the basic group this one was upgraded from
+		TD::int53 chatId = _atoi64(dbei.szId);
+		if (chatId != 0 && strchr(dbei.szId, '_'))
+			pLoad->chatId = chatId;
+		pLoad->fromId = dbei2id(dbei);
+		oldestDate = dbei.iTimestamp;
+		break;
+	}
+
+	if (iDays)
+		pLoad->minDate = oldestDate - iDays * 86400;
+
+	debugLogA("Loading older history for chat %lld from message %lld: limit %d, days %d", pLoad->chatId, pLoad->fromId, iLimit, iDays);
+	RequestHistory(pLoad, 0);
+}
+
+INT_PTR CTelegramProto::SvcLoadHistory100(WPARAM hContact, LPARAM)
+{
+	LoadOlderHistory(hContact, 100, 0);
+	return 0;
+}
+
+INT_PTR CTelegramProto::SvcLoadHistory10Days(WPARAM hContact, LPARAM)
+{
+	LoadOlderHistory(hContact, 0, 10);
+	return 0;
+}
+
+// pUserInfo is a TG_HISTORY_LOAD prepared for the basic group the chat was upgraded from
+
+void CTelegramProto::OnGetBasicGroupInfo(td::ClientManager::Response &response, void *pUserInfo)
+{
+	auto *pLoad = (TG_HISTORY_LOAD *)pUserInfo;
+
+	if (!response.object || response.object->get_id() != TD::chat::ID) {
+		if (response.object)
+			debugLogA("Gotten class ID %d instead of %d, exiting", response.object->get_id(), TD::chat::ID);
+		delete pLoad;
 		return;
 	}
 
-	auto *pChat = ((TD::chat *)response.object.get());
-	SendQuery(new TD::getChatHistory(pChat->id_, 0, 0, 100, false), &CTelegramProto::OnGetHistory, pUserInfo);
+	pLoad->chatId = ((TD::chat *)response.object.get())->id_;
+	RequestHistory(pLoad, 0);
 }
 
 void CTelegramProto::OnGetHistory(td::ClientManager::Response &response, void *pUserInfo)
 {
-	if (!response.object)
+	auto *pLoad = (TG_HISTORY_LOAD *)pUserInfo;
+	auto *pUser = pLoad->pUser;
+
+	if (!response.object) {
+		delete pLoad;
 		return;
+	}
+
+	if (response.object->get_id() == TD::error::ID) {
+		auto *pError = (TD::error *)response.object.get();
+
+		// "Too Many Requests: retry after N"
+		if (pError->code_ == 429) {
+			int iWait = 5;
+			auto iPos = pError->message_.find("retry after ");
+			if (iPos != std::string::npos)
+				iWait = atoi(pError->message_.c_str() + iPos + 12) + 1;
+			if (iWait > 600)
+				iWait = 600;
+
+			debugLogA("History load for chat %lld: flood wait %d seconds", pLoad->chatId, iWait);
+			RequestHistory(pLoad, iWait * 1000);
+			return;
+		}
+
+		if (++pLoad->iErrors <= 3) {
+			debugLogA("History load for chat %lld: error %d (%s), retrying", pLoad->chatId, pError->code_, pError->message_.c_str());
+			RequestHistory(pLoad, 2000 * pLoad->iErrors);
+			return;
+		}
+
+		debugLogA("History load for chat %lld: error %d (%s), giving up", pLoad->chatId, pError->code_, pError->message_.c_str());
+		History::FinishLoad(GetRealContact(pUser));
+		delete pLoad;
+		return;
+	}
 
 	if (response.object->get_id() != TD::messages::ID) {
 		debugLogA("Gotten class ID %d instead of %d, exiting", response.object->get_id(), TD::messages::ID);
+		delete pLoad;
 		return;
 	}
 
-	auto *pUser = (TG_USER *)pUserInfo;
+	pLoad->iErrors = 0;
+
 	TD::int53 lastMsgId = INT64_MAX;
 	auto *pMessages = (TD::messages *)response.object.get();
 	if (pMessages->messages_.size() == 0) {
+		// TDLib may return an empty page while it's still fetching from the server
+		if (++pLoad->iEmpty <= 2) {
+			RequestHistory(pLoad, 1500);
+			return;
+		}
+
 		History::FinishLoad(GetRealContact(pUser));
+		delete pLoad;
 		return;
 	}
-	
+
+	pLoad->iEmpty = 0;
+
+	bool bDone = false;
 	for (auto &it : pMessages->messages_) {
 		auto *pMsg = it.get();
+
+		// messages come newest first, so the first one beyond a limit ends the load
+		if ((pLoad->minDate && pMsg->date_ < pLoad->minDate) || (pLoad->iLimit && pLoad->iLoaded >= pLoad->iLimit)) {
+			bDone = true;
+			break;
+		}
+		pLoad->iLoaded++;
+
 		if (pMsg->id_ < lastMsgId)
 			lastMsgId = pMsg->id_;
 
 		if (auto *pContent = it->content_.get())
-			if (pContent->get_id() == TD::messageChatUpgradeFrom::ID)
-				SendQuery(new TD::createBasicGroupChat(((TD::messageChatUpgradeFrom *)pContent)->basic_group_id_, true), &CTelegramProto::OnGetBasicGroupInfo, pUser);
+			if (pContent->get_id() == TD::messageChatUpgradeFrom::ID) {
+				// continue into the old basic group with whatever is left of the limits
+				auto *pOld = new TG_HISTORY_LOAD();
+				pOld->pUser = pUser;
+				pOld->minDate = pLoad->minDate;
+				pOld->iLimit = pLoad->iLimit ? pLoad->iLimit - pLoad->iLoaded : 0;
+				if (pLoad->iLimit && pOld->iLimit <= 0)
+					delete pOld;
+				else
+					SendQuery(new TD::createBasicGroupChat(((TD::messageChatUpgradeFrom *)pContent)->basic_group_id_, true), &CTelegramProto::OnGetBasicGroupInfo, pOld);
+			}
 
 		char szUserId[100];
 		auto szMsgId(msg2id(pMsg));
@@ -567,8 +724,16 @@ void CTelegramProto::OnGetHistory(td::ClientManager::Response &response, void *p
 		db_event_add(GetRealContact(pUser), &dbei);
 	}
 
-	// fetch next portion
-	SendQuery(new TD::getChatHistory(pUser->chatId, lastMsgId, 0, 100, false), &CTelegramProto::OnGetHistory, pUser);
+	if (bDone) {
+		debugLogA("History load for chat %lld: limit reached after %d messages", pLoad->chatId, pLoad->iLoaded);
+		History::FinishLoad(GetRealContact(pUser));
+		delete pLoad;
+		return;
+	}
+
+	// fetch next portion of the same chat, with a short pause against flood limits
+	pLoad->fromId = lastMsgId;
+	RequestHistory(pLoad, 300);
 }
 
 INT_PTR CTelegramProto::SvcLoadServerHistory(WPARAM hContact, LPARAM)
@@ -576,7 +741,7 @@ INT_PTR CTelegramProto::SvcLoadServerHistory(WPARAM hContact, LPARAM)
 	auto userId = GetId(hContact);
 
 	if (auto *pUser = FindUser(userId))
-		SendQuery(new TD::getChatHistory(pUser->chatId, 0, 0, 100, false), &CTelegramProto::OnGetHistory, pUser);
+		StartHistoryLoad(pUser, pUser->chatId);
 
 	return 0;
 }
@@ -1295,7 +1460,15 @@ void CTelegramProto::ProcessUser(TD::updateUser *pObj)
 	bool bIsMe = pUser->id_ == m_iOwnId;
 	auto typeID = (pUser->type_) ? pUser->type_->get_id() : 0;
 
-	if (!bIsMe && !pUser->is_contact_) {
+	// address book entries become contacts only if allowed or already in the list;
+	// the rest are added by ProcessChat() when they have a dialog
+	bool bIsContact = pUser->is_contact_;
+	if (bIsContact && !m_bLoadContacts) {
+		auto *pu = FindUser(pUser->id_);
+		bIsContact = (pu != nullptr && pu->hContact != INVALID_CONTACT_ID);
+	}
+
+	if (!bIsMe && !bIsContact) {
 		switch (typeID) {
 		case TD::userTypeDeleted::ID:
 			return;

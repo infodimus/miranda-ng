@@ -188,3 +188,149 @@ INT_PTR CTelegramProto::SvcExecMenu(WPARAM iCommand, LPARAM pHandle)
 	}
 	return 0;
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Dialog for deleting several contacts from server at once
+
+struct TG_DELETE_CONTACTS
+{
+	std::vector<MCONTACT> arContacts;
+	uint32_t flags;
+};
+
+// deletes one contact every 5 seconds, so that Telegram doesn't treat it as flood.
+// deletion goes through OnContactDeleted(), which removes the contact and chat on the server
+
+void CTelegramProto::DeleteContactsThread(void *param)
+{
+	std::unique_ptr<TG_DELETE_CONTACTS> pData((TG_DELETE_CONTACTS *)param);
+
+	bool bFirst = true;
+	for (auto &hContact : pData->arContacts) {
+		if (!bFirst)
+			for (int i = 0; i < 20; i++) {
+				if (Miranda_IsTerminated())
+					return;
+				Sleep(250);
+			}
+		bFirst = false;
+
+		// stop if the account went offline, otherwise the contact would only be deleted locally
+		if (!isRunning() || !m_bAuthorized) {
+			debugLogA("Delete contacts: account is offline, stopping");
+			return;
+		}
+
+		// the user may have deleted it by hand meanwhile
+		if (!Proto_IsProtoOnContact(hContact, m_szModuleName))
+			continue;
+
+		debugLogA("Delete contacts: deleting %d", hContact);
+		db_delete_contact(hContact, pData->flags);
+	}
+}
+
+class CDeleteContactsDlg : public CTelegramDlgBase
+{
+	CCtrlClc m_clist;
+	CCtrlCheck chkHistory, chkForEveryone;
+	bool m_bLocal;  // delete from Miranda only, the server isn't touched
+
+	void FilterList(CCtrlClc *)
+	{
+		for (auto &hContact : Contacts())
+			if (!Proto_IsProtoOnContact(hContact, m_proto->m_szModuleName) || hContact == m_proto->m_iSavedMessages)
+				if (HANDLE hItem = m_clist.FindContact(hContact))
+					m_clist.DeleteItem(hItem);
+	}
+
+	void ResetListOptions(CCtrlClc *)
+	{
+		m_clist.SetHideEmptyGroups(true);
+		m_clist.SetHideOfflineRoot(false);
+	}
+
+public:
+	CDeleteContactsDlg(CTelegramProto *ppro, bool bLocal) :
+		CTelegramDlgBase(ppro, IDD_DELETE_CONTACTS),
+		m_clist(this, IDC_CLIST),
+		chkHistory(this, IDC_DEL_HISTORY),
+		chkForEveryone(this, IDC_DEL_FOREVERYONE),
+		m_bLocal(bLocal)
+	{
+		m_clist.OnNewContact =
+			m_clist.OnListRebuilt = Callback(this, &CDeleteContactsDlg::FilterList);
+		m_clist.OnOptionsChanged = Callback(this, &CDeleteContactsDlg::ResetListOptions);
+		chkHistory.OnChange = Callback(this, &CDeleteContactsDlg::onChange_History);
+	}
+
+	bool OnInitDialog() override
+	{
+		m_clist.SetStyle(m_clist.GetStyle() | CLS_SHOWHIDDEN | CLS_CHECKBOXES | CLS_HIDEEMPTYGROUPS | CLS_USEGROUPS | CLS_GREYALTERNATE | CLS_GROUPCHECKBOXES);
+		m_clist.SendMsg(CLM_SETEXSTYLE, CLS_EX_DISABLEDRAGDROP | CLS_EX_TRACKSELECT, 0);
+		ResetListOptions(&m_clist);
+		FilterList(&m_clist);
+
+		if (m_bLocal) {
+			SetWindowTextW(m_hwnd, TranslateT("Delete contacts locally"));
+			chkHistory.Hide();
+			chkForEveryone.Hide();
+		}
+		else chkHistory.SetState(true);
+		return true;
+	}
+
+	bool OnApply() override
+	{
+		std::vector<MCONTACT> arContacts;
+		for (auto &hContact : m_proto->AccContacts())
+			if (HANDLE hItem = m_clist.FindContact(hContact))
+				if (m_clist.GetCheck(hItem))
+					arContacts.push_back(hContact);
+
+		if (arContacts.empty())
+			return false;
+
+		if (m_bLocal) {
+			CMStringW wszText(FORMAT, TranslateT("Delete %d contact(s) and their history from Miranda? They stay on the Telegram server; contacts with an active dialog come back on the next login."), (int)arContacts.size());
+			if (IDYES != MessageBoxW(m_hwnd, wszText, TranslateT("Delete contacts locally"), MB_YESNO | MB_ICONWARNING))
+				return false;
+
+			// no server requests are made without flags, so no pause is needed
+			for (auto &hContact : arContacts)
+				db_delete_contact(hContact, 0);
+			return true;
+		}
+
+		CMStringW wszText(FORMAT, TranslateT("Delete %d contact(s) from the Telegram server? This cannot be undone."), (int)arContacts.size());
+		if (IDYES != MessageBoxW(m_hwnd, wszText, TranslateT("Delete contacts from server"), MB_YESNO | MB_ICONWARNING))
+			return false;
+
+		uint32_t flags = CDF_DEL_CONTACT;
+		if (chkHistory.IsChecked()) {
+			flags |= CDF_DEL_HISTORY;
+			if (chkForEveryone.IsChecked())
+				flags |= CDF_FOR_EVERYONE;
+		}
+
+		m_proto->ForkThread(&CTelegramProto::DeleteContactsThread, new TG_DELETE_CONTACTS{ std::move(arContacts), flags });
+		return true;
+	}
+
+	void onChange_History(CCtrlCheck *)
+	{
+		chkForEveryone.Enable(chkHistory.IsChecked());
+	}
+};
+
+INT_PTR CTelegramProto::SvcDeleteContacts(WPARAM, LPARAM)
+{
+	(new CDeleteContactsDlg(this, false))->Show();
+	return 0;
+}
+
+INT_PTR CTelegramProto::SvcDeleteContactsLocal(WPARAM, LPARAM)
+{
+	(new CDeleteContactsDlg(this, true))->Show();
+	return 0;
+}

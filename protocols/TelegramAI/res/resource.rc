@@ -79,7 +79,7 @@ BEGIN
     PUSHBUTTON      "Log out",IDC_LOGOUT,108,124,74,14
 END
 
-IDD_OPTIONS DIALOGEX 0, 0, 305, 188
+IDD_OPTIONS DIALOGEX 0, 0, 305, 196
 STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
 EXSTYLE WS_EX_CONTROLPARENT
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
@@ -96,7 +96,7 @@ BEGIN
     CONTROL         "Do not open chat windows on creation",IDC_HIDECHATS,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,83,294,10
     CONTROL         "Compress files on send",IDC_COMPRESS_FILES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,96,294,10
-    PUSHBUTTON      "Log out",IDC_LOGOUT,212,168,86,14
+    PUSHBUTTON      "Log out",IDC_LOGOUT,212,176,86,14
     CONTROL         "Include URL preview into message text",IDC_USE_PREVIEW,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,109,294,10
     CONTROL         "Do not store channel history in the database",IDC_RESIDENT_CHANNELS,
@@ -104,6 +104,8 @@ BEGIN
     CONTROL         "Delete contacts in Miranda when they are deleted from server",IDC_DELETE_CONTACTS,
                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,135,294,10
     CONTROL         "Ignore bots",IDC_IGNORE_BOTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,148,294,10
+    CONTROL         "Load contacts from server (active dialogs are always loaded)",IDC_LOAD_CONTACTS,
+                    "Button",BS_AUTOCHECKBOX | WS_TABSTOP,4,161,294,10
 END
 
 IDD_OPTIONS_ADV DIALOGEX 0, 0, 310, 176
@@ -189,6 +191,18 @@ BEGIN
     CONTROL         "",IDC_CLIST,"CListControl",WS_TABSTOP | 0x1,8,4,201,239,WS_EX_CLIENTEDGE
     DEFPUSHBUTTON   "Forward",IDOK,104,248,50,14
     PUSHBUTTON      "Cancel",IDCANCEL,158,248,50,14
+END
+
+IDD_DELETE_CONTACTS DIALOGEX 0, 0, 215, 280
+STYLE DS_SETFONT | DS_MODALFRAME | DS_SETFOREGROUND | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+CAPTION "Delete contacts from server"
+FONT 8, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    CONTROL         "",IDC_CLIST,"CListControl",WS_TABSTOP | 0x1,8,4,201,215,WS_EX_CLIENTEDGE
+    CONTROL         "Also delete chat history",IDC_DEL_HISTORY,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,8,224,201,10
+    CONTROL         "Delete history for both sides",IDC_DEL_FOREVERYONE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,18,236,191,10
+    DEFPUSHBUTTON   "Delete",IDOK,104,260,50,14
+    PUSHBUTTON      "Cancel",IDCANCEL,158,260,50,14
 END
 
 IDD_REACTIONS DIALOGEX 0, 0, 215, 40

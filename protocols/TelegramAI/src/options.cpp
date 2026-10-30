@@ -22,7 +22,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 class COptionsDlg : public CTelegramDlgBase
 {
 	CCtrlButton btnLogout;
-	CCtrlCheck chkHideChats, chkCompressFiles, chkIncludePreviews, chkResidentChannels, chkDeleteContacts, chkIgnoreBots;
+	CCtrlCheck chkHideChats, chkCompressFiles, chkIncludePreviews, chkResidentChannels, chkDeleteContacts, chkIgnoreBots, chkLoadContacts;
 	CCtrlCombo cmbCountry;
 	CCtrlEdit edtGroup, edtPhone, edtDeviceName;
 	ptrW m_wszOldGroup;
@@ -37,6 +37,7 @@ public:
 		edtGroup(this, IDC_DEFGROUP),
 		edtDeviceName(this, IDC_DEVICE_NAME),
 		chkIgnoreBots(this, IDC_IGNORE_BOTS),
+		chkLoadContacts(this, IDC_LOAD_CONTACTS),
 		chkCompressFiles(this, IDC_COMPRESS_FILES),
 		chkDeleteContacts(this, IDC_DELETE_CONTACTS),
 		chkIncludePreviews(this, IDC_USE_PREVIEW),
@@ -50,6 +51,7 @@ public:
 
 		if (bFullDlg) {
 			CreateLink(chkIgnoreBots, ppro->m_bIgnoreBots);
+			CreateLink(chkLoadContacts, ppro->m_bLoadContacts);
 			CreateLink(chkCompressFiles, ppro->m_bCompressFiles);
 			CreateLink(chkDeleteContacts, ppro->m_bDeleteContacts);
 			CreateLink(chkIncludePreviews, ppro->m_bIncludePreviews);

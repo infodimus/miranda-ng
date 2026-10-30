@@ -59,6 +59,7 @@ CTelegramProto::CTelegramProto(const char* protoName, const wchar_t* userName) :
 	m_wszDefaultGroup(this, "DefaultGroup", L"Telegram AI"),
 	m_bUsePopups(this, "UsePopups", true),
 	m_bIgnoreBots(this, "IgnoreBots", false),
+	m_bLoadContacts(this, "LoadContacts", false),
 	m_bCompressFiles(this, "CompressFiles", true),
 	m_bHideGroupchats(this, "HideChats", true),
 	m_bDeleteContacts(this, "DeleteContacts", false),
@@ -255,6 +256,19 @@ void CTelegramProto::OnBuildProtoMenu()
 	mi.name.a = LPGEN("Add phone contact");
 	mi.position = 200001;
 	mi.hIcolibItem = Skin_GetIconHandle(SKINICON_OTHER_ADDCONTACT);
+	Menu_AddProtoMenuItem(&mi, m_szModuleName);
+
+	mi.pszService = "/DeleteContacts";
+	CreateProtoService(mi.pszService, &CTelegramProto::SvcDeleteContacts);
+	mi.name.a = LPGEN("Delete contacts...");
+	mi.position++;
+	mi.hIcolibItem = Skin_GetIconHandle(SKINICON_OTHER_DELETE);
+	Menu_AddProtoMenuItem(&mi, m_szModuleName);
+
+	mi.pszService = "/DeleteContactsLocal";
+	CreateProtoService(mi.pszService, &CTelegramProto::SvcDeleteContactsLocal);
+	mi.name.a = LPGEN("Delete contacts locally...");
+	mi.position++;
 	Menu_AddProtoMenuItem(&mi, m_szModuleName);
 }
 

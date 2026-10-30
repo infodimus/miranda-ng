@@ -127,6 +127,24 @@ void CTelegramProto::InitAiMenus()
 	SET_UID(mi, 0xd24443d2, 0x8c88, 0x40b9, 0x99, 0xfa, 0xb7, 0xa4, 0xe8, 0xce, 0x93, 0xa5);
 	hmiAiStop = Menu_AddContactMenuItem(&mi, m_szModuleName);
 
+	// partial history loads for very long chats
+	CreateProtoService("/LoadHistory100", &CTelegramProto::SvcLoadHistory100);
+	CreateProtoService("/LoadHistory10Days", &CTelegramProto::SvcLoadHistory10Days);
+
+	mi.hIcolibItem = Skin_GetIconHandle(SKINICON_OTHER_HISTORY);
+
+	mi.pszService = "/LoadHistory100";
+	mi.position = -200000900;
+	mi.name.w = LPGENW("Load 100 older messages");
+	SET_UID(mi, 0xd24443d2, 0x8c88, 0x40b9, 0x99, 0xfa, 0xb7, 0xa4, 0xe8, 0xce, 0x93, 0xa6);
+	hmiHistory100 = Menu_AddContactMenuItem(&mi, m_szModuleName);
+
+	mi.pszService = "/LoadHistory10Days";
+	mi.position++;
+	mi.name.w = LPGENW("Load 10 more days of history");
+	SET_UID(mi, 0xd24443d2, 0x8c88, 0x40b9, 0x99, 0xfa, 0xb7, 0xa4, 0xe8, 0xce, 0x93, 0xa7);
+	hmiHistory10Days = Menu_AddContactMenuItem(&mi, m_szModuleName);
+
 	HookProtoEvent(ME_CLIST_PREBUILDCONTACTMENU, &CTelegramProto::OnPrebuildContactMenu);
 }
 
@@ -136,6 +154,10 @@ int CTelegramProto::OnPrebuildContactMenu(WPARAM hContact, LPARAM)
 	bool bAi = bShow && IsAiChat(hContact);
 	Menu_ShowItem(hmiAiStart, bShow && !bAi);
 	Menu_ShowItem(hmiAiStop, bAi);
+
+	bool bHistory = Proto_IsProtoOnContact(hContact, m_szModuleName);
+	Menu_ShowItem(hmiHistory100, bHistory);
+	Menu_ShowItem(hmiHistory10Days, bHistory);
 	return 0;
 }
 
