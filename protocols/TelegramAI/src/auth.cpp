@@ -119,13 +119,16 @@ void CTelegramProto::ProcessAuth(TD::updateAuthorizationState *pObj)
 				break;
 			}
 
+			bool bTestDc = m_bUseTestServer;
 			CMStringW wszPath(GetProtoFolder());
+			if (bTestDc)
+				wszPath += L"\\test"; // keep the test session apart from the production one
 
 			auto *request = new TD::setTdlibParameters();
 			request->database_directory_ = T2Utf(wszPath).get();
 			request->use_message_database_ = false;
 			request->use_secret_chats_ = true;
-			request->use_test_dc_ = getBool("UseTestServer"); // Hidden setting
+			request->use_test_dc_ = bTestDc;
 			request->api_id_ = iApiId;
 			request->api_hash_ = szApiHash;
 			request->system_language_code_ = Langpack_GetDefaultLocaleName();

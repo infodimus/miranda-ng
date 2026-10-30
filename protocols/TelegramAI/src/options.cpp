@@ -22,7 +22,7 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 class COptionsDlg : public CTelegramDlgBase
 {
 	CCtrlButton btnLogout;
-	CCtrlCheck chkHideChats, chkCompressFiles, chkIncludePreviews, chkResidentChannels, chkDeleteContacts, chkIgnoreBots, chkLoadContacts;
+	CCtrlCheck chkHideChats, chkCompressFiles, chkIncludePreviews, chkResidentChannels, chkDeleteContacts, chkIgnoreBots, chkLoadContacts, chkTestServer;
 	CCtrlCombo cmbCountry;
 	CCtrlEdit edtGroup, edtPhone, edtDeviceName;
 	ptrW m_wszOldGroup;
@@ -42,12 +42,14 @@ public:
 		chkDeleteContacts(this, IDC_DELETE_CONTACTS),
 		chkIncludePreviews(this, IDC_USE_PREVIEW),
 		chkResidentChannels(this, IDC_RESIDENT_CHANNELS),
+		chkTestServer(this, IDC_TEST_SERVER),
 		m_wszOldGroup(mir_wstrdup(ppro->m_wszDefaultGroup))
 	{
 		CreateLink(edtPhone, ppro->m_szOwnPhone);
 		CreateLink(edtGroup, ppro->m_wszDefaultGroup);
 		CreateLink(chkHideChats, ppro->m_bHideGroupchats);
 		CreateLink(edtDeviceName, ppro->m_wszDeviceName);
+		CreateLink(chkTestServer, ppro->m_bUseTestServer);
 
 		if (bFullDlg) {
 			CreateLink(chkIgnoreBots, ppro->m_bIgnoreBots);
@@ -75,11 +77,12 @@ public:
 			if (countryCode == m_proto->m_iCountry)
 				cmbCountry.SetCurSel(idx);
 		}
-		
+
 		bool bAuthorized = m_proto->getBool(DBKEY_AUTHORIZED);
 		btnLogout.Enable(bAuthorized);
 		edtPhone.Enable(!bAuthorized);
 		cmbCountry.Enable(!bAuthorized);
+		chkTestServer.Enable(!bAuthorized);
 
 		onChange_Country(0);
 		return true;
@@ -106,6 +109,7 @@ public:
 
 		edtPhone.Enable();
 		cmbCountry.Enable();
+		chkTestServer.Enable();
 	}
 
 	void onChange_Country(CCtrlCombo *)

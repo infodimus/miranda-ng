@@ -60,6 +60,7 @@ CTelegramProto::CTelegramProto(const char* protoName, const wchar_t* userName) :
 	m_bUsePopups(this, "UsePopups", true),
 	m_bIgnoreBots(this, "IgnoreBots", false),
 	m_bLoadContacts(this, "LoadContacts", false),
+	m_bUseTestServer(this, "UseTestServer", false),
 	m_bCompressFiles(this, "CompressFiles", true),
 	m_bHideGroupchats(this, "HideChats", true),
 	m_bDeleteContacts(this, "DeleteContacts", false),

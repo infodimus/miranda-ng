@@ -61,6 +61,7 @@
 #define IDC_DEL_HISTORY                 1043
 #define IDC_DEL_FOREVERYONE             1044
 #define IDC_LOAD_CONTACTS               1045
+#define IDC_TEST_SERVER                 1046
 
 // Next default values for new objects
 // 

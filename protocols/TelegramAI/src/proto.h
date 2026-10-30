@@ -510,6 +510,7 @@ public:
 	CMOption<bool>     m_bDeleteContacts;   // delete contacts from Miranda when they are deleted from server
 	CMOption<bool>     m_bIgnoreBots;       // never add bots to the contact list
 	CMOption<bool>     m_bLoadContacts;     // add the server address book to the contact list, not only active dialogs
+	CMOption<bool>     m_bUseTestServer;    // log in to Telegram's test DCs (real number, code comes to the real account)
 	CMOption<uint32_t> m_iTimeDiff1;		    // set this status to m_iStatus1 after this interval of secs
 	CMOption<uint32_t> m_iStatus1;
 	CMOption<uint32_t> m_iTimeDiff2;        // set this status to m_iStatus2 after this interval of secs
