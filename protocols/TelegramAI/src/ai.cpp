@@ -150,7 +150,13 @@ void CTelegramProto::InitAiMenus()
 
 int CTelegramProto::OnPrebuildContactMenu(WPARAM hContact, LPARAM)
 {
-	bool bShow = Proto_IsProtoOnContact(hContact, m_szModuleName) && !isChatRoom(hContact) && hContact != m_iSavedMessages;
+	bool bShow = false;
+	if (Proto_IsProtoOnContact(hContact, m_szModuleName) && hContact != m_iSavedMessages) {
+		// channels can't be answered, a forum is answered in its topics, not in the root
+		TD::int53 threadId;
+		if (auto *pUser = AiFindChat(hContact, threadId))
+			bShow = !pUser->isChannel && !(pUser->isForum && !threadId);
+	}
 	bool bAi = bShow && IsAiChat(hContact);
 	Menu_ShowItem(hmiAiStart, bShow && !bAi);
 	Menu_ShowItem(hmiAiStop, bAi);
@@ -159,6 +165,14 @@ int CTelegramProto::OnPrebuildContactMenu(WPARAM hContact, LPARAM)
 	Menu_ShowItem(hmiHistory100, bHistory);
 	Menu_ShowItem(hmiHistory10Days, bHistory);
 	return 0;
+}
+
+// private chats, groups and forum topics (their contacts have no own id, only owner + thread)
+
+TG_USER* CTelegramProto::AiFindChat(MCONTACT hContact, TD::int53 &threadId)
+{
+	threadId = GetId(hContact, DBKEY_THREAD);
+	return FindUser(threadId ? GetId(hContact, DBKEY_OWNER) : GetId(hContact));
 }
 
 bool CTelegramProto::IsAiChat(MCONTACT hContact)
@@ -202,8 +216,14 @@ INT_PTR CTelegramProto::SvcAiStop(WPARAM hContact, LPARAM)
 
 void CTelegramProto::AiOnIncomingMessage(TG_USER *pUser, MCONTACT hContact, const TD::message *pMsg)
 {
-	if (!m_bAiEnabled || pMsg->is_outgoing_ || pUser->isGroupChat || pUser->isBot)
+	if (!m_bAiEnabled || pMsg->is_outgoing_ || pUser->isBot || pUser->isChannel)
 		return;
+
+	// never talk to bots in groups, two robots would chat forever
+	if (pUser->isGroupChat)
+		if (auto *pSender = GetSender(pMsg->sender_id_.get()))
+			if (pSender->isBot || pSender->id == m_iOwnId)
+				return;
 
 	if (time(0) - pMsg->date_ > AI_MAX_MESSAGE_AGE)
 		return;
@@ -258,31 +278,39 @@ void CTelegramProto::AiReplyThread(void *p)
 	if (!isActual() || !IsAiChat(hContact) || !isRunning())
 		return;
 
+	TD::int53 threadId;
+	auto *pUser = AiFindChat(hContact, threadId);
+	if (pUser == nullptr || pUser->chatId == -1)
+		return;
+
 	CMStringA szReply;
-	if (!AiRequest(hContact, szReply) || szReply.IsEmpty())
+	TD::int53 replyId = 0;
+	if (!AiRequest(hContact, pUser->isGroupChat, szReply, replyId) || szReply.IsEmpty())
 		return;
 
 	// something new came while the model was thinking, a newer thread will answer
-	if (!isActual() || !IsAiChat(hContact))
+	if (!isActual() || !IsAiChat(hContact) || !isRunning())
 		return;
 
-	auto *pUser = FindUser(GetId(hContact));
-	if (pUser == nullptr || !isRunning())
+	if (Contact::IsReadonly(hContact)) {
+		debugLogA("AI: chat %lld is read only, reply dropped", pUser->chatId);
 		return;
+	}
 
 	// look like a human typing
-	UserIsTyping(hContact, PROTOTYPE_SELFTYPING_ON);
+	SendQuery(new TD::sendChatAction(pUser->chatId, 0, "", TD::make_object<TD::chatActionTyping>()));
 	if (!AiSleep(min(1000 + 60 * szReply.GetLength(), 8000)))
 		return;
 
+	// in a group the reply is attached to the message it answers, so it's clear whom we talk to
 	if (isActual() && isRunning())
-		SendTextMessage(pUser->chatId, 0, 0, szReply);
+		SendTextMessage(pUser->chatId, threadId, replyId, szReply);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // ChatGPT (OpenAI-compatible chat completions) request
 
-bool CTelegramProto::AiRequest(MCONTACT hContact, CMStringA &szReply)
+bool CTelegramProto::AiRequest(MCONTACT hContact, bool bGroup, CMStringA &szReply, TD::int53 &replyId)
 {
 	// collect the last messages, newest first
 	struct Msg { bool bSent; CMStringA szText; };
@@ -303,6 +331,14 @@ bool CTelegramProto::AiRequest(MCONTACT hContact, CMStringA &szReply)
 		if (iLang == -1 && !dbei.bSent)
 			iLang = DetectLanguage(szText);
 
+		// several people talk in a group: the model has to know who said what
+		if (bGroup && !dbei.bSent) {
+			if (replyId == 0)
+				replyId = dbei2id(dbei);
+			if (mir_strlen(dbei.szUserId))
+				szText.Insert(0, CMStringA(dbei.szUserId) + ": ");
+		}
+
 		arMessages.push_back({ dbei.bSent, szText });
 	}
 
@@ -321,6 +357,9 @@ bool CTelegramProto::AiRequest(MCONTACT hContact, CMStringA &szReply)
 	else
 		szSystem.Append("IMPORTANT: reply ONLY in English, whatever language the other person uses.");
 	szSystem.Append(" Output only the text of your next chat message, without quotes or any comments.");
+	if (bGroup)
+		szSystem.Append("\n\nThis is a group chat with several participants. Each of their messages starts with the sender's name and a colon. "
+			"Answer as one more participant, address people by name when needed, and never start your reply with your own name.");
 
 	JSONNode messages(JSON_ARRAY); messages.set_name("messages");
 	{
@@ -344,7 +383,7 @@ bool CTelegramProto::AiRequest(MCONTACT hContact, CMStringA &szReply)
 	req.AddHeader("Content-Type", "application/json");
 	req.SetData(szBody.c_str(), szBody.size());
 
-	debugLogA("AI: requesting reply for contact %d, %d messages, language %s", hContact, (int)arMessages.size(), iLang == AI_LANG_RU ? "ru" : "en");
+	debugLogA("AI: requesting reply for %s %d, %d messages, language %s", bGroup ? "group" : "contact", hContact, (int)arMessages.size(), iLang == AI_LANG_RU ? "ru" : "en");
 
 	NLHR_PTR reply(Netlib_HttpTransaction(m_hNetlibUser, &req));
 	if (reply == nullptr) {

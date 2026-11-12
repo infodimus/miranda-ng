@@ -415,7 +415,8 @@ class CTelegramProto : public PROTO<CTelegramProto>
 	bool IsAiChat(MCONTACT hContact);
 	void AiOnIncomingMessage(TG_USER *pUser, MCONTACT hContact, const TD::message *pMsg);
 	void AiScheduleReply(MCONTACT hContact);
-	bool AiRequest(MCONTACT hContact, CMStringA &szReply);
+	bool AiRequest(MCONTACT hContact, bool bGroup, CMStringA &szReply, TD::int53 &replyId);
+	TG_USER* AiFindChat(MCONTACT hContact, TD::int53 &threadId);
 
 	INT_PTR __cdecl SvcAiStart(WPARAM, LPARAM);
 	INT_PTR __cdecl SvcAiStop(WPARAM, LPARAM);
